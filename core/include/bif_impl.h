@@ -55,6 +55,7 @@
 #include "mixed.h"
 #include "term_util.h"
 #include "list_util.h"
+#include "map_util.h"
 #include "unicode.h"
 #include "catch_tab.h"
 

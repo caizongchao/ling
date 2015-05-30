@@ -1,19 +1,32 @@
 
-.PHONY: default bc core apps railing test
+.PHONY: default bc core apps railing test install checkotp test.img
 
-default: bc core apps railing
+include Config.mk
 
-bc:
-	make -C bc
+default: railing | checkotp
 
-core:
-	make -C core
+checkotp:
+ifneq ($(OTP_VER) , $(shell erl -noshell -eval "io:format(erlang:system_info(otp_release)),erlang:halt(0)."))
+	$(error Erlang/OTP $(OTP_VER) not found)
+endif
 
-apps:
-	make -C apps
+bc: test
+	$(MAKE) -C bc
 
-railing:
-	make -C railing
+core: bc
+	$(MAKE) -C core
+
+apps: bc
+	$(MAKE) -C apps
+
+railing: bc core apps
+	$(MAKE) -C railing
 
 test:
-	make -C test
+	$(MAKE) -C test beams
+
+install: bc core apps railing
+	install railing/railing /usr/bin
+
+test.img: railing
+	$(MAKE) -C test test.img

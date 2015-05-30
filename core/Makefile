@@ -1,17 +1,30 @@
 
-.PHONY: default
-INCLUDES := premod.inc code_base.inc include/mod_info.inc preload/literals.bin catch_tab.inc
-default: $(INCLUDES) vmling.o
+.PHONY: default nettle
 
-LING_VER := 0.2.3
+include ../Config.mk
+
+INCLUDES := premod.inc code_base.inc include/mod_info.inc preload/literals.bin catch_tab.inc
+default: nettle $(INCLUDES) vmling.o
+
 ARCH := x86
 XEN_INTERFACE_VERSION := 0x00030205
+
+ifeq ($(CROSS),1)
+TOOLPREFIX := x86_64-pc-linux-
+else
+TOOLPREFIX :=
+endif
+
+CC := $(TOOLPREFIX)gcc
+OBJCOPY := $(TOOLPREFIX)objcopy
 
 ASFLAGS := -D__ASSEMBLY__
 
 CPPFLAGS := -D_ISOC99_SOURCE -D_GNU_SOURCE
+CPPFLAGS += -iquote lib
 CPPFLAGS += -isystem lib/misc/include
 CPPFLAGS += -isystem lib/pcre
+CPPFLAGS += -isystem lib
 CPPFLAGS += -iquote include -iquote arch/$(ARCH)/include
 CPPFLAGS += -iquote bignum
 CPPFLAGS += -iquote lib/lwip/src/include
@@ -21,7 +34,6 @@ CPPFLAGS += -iquote lib/lwip/ling
 CPPFLAGS += -D__XEN_INTERFACE_VERSION__=$(XEN_INTERFACE_VERSION)
 
 CPPFLAGS += -DLING_VER=$(LING_VER)
-CPPFLAGS += -DLING_HOSTNAME=$(LING_HOSTNAME)
 
 #CPPFLAGS += -DLING_DEBUG
 #CPPFLAGS += -DDEBUG_UNUSED_MEM
@@ -44,7 +56,7 @@ LDFLAGS += -Xlinker --relocatable
 LDFLAGS += -Xlinker --build-id=none
 LDFLAGS += -Xlinker -Map=ling.map
 LDFLAGS += -static
-LDFLAGS_FINAL := -lgcc -lnettle
+LDFLAGS_FINAL := -lgcc lib/nettle/libnettle.a
 
 STARTUP_OBJ := $(patsubst %.S,%.o,arch/$(ARCH)/startup.S)
 
@@ -83,31 +95,40 @@ LWIP_SRC_DIRS := \
 LWIP_SRCS := $(foreach dir,$(LWIP_SRC_DIRS),$(wildcard $(dir)/*.c))
 LWIP_OBJS := $(patsubst %.c,%.o,$(LWIP_SRCS))
 
+ifeq ($(CROSS),1)
+NETTLE_FLAGS := --host=x86_64-pc-linux
+else
+NETTLE_FLAGS :=
+endif
+
 ALL_OBJS := $(OBJS) $(ARCH_OBJS) $(BIGNUM_OBJS) $(MISC_OBJS) $(PCRE_OBJS) $(LWIP_OBJS) \
-	preload/literals.o
+	preload/literals.o ling_main.o
 
 $(STARTUP_OBJ): %.o: %.S
-	gcc $(ASFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CC) $(ASFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # Stop iops reordering in ling_main.o
 OBJS1 := $(filter-out ling_main.o,$(OBJS))
 $(ARCH_OBJS) $(OBJS1) $(BIGNUM_OBJS): %.o: %.c include/atom_defs.h
-	gcc $(CFLAGS) $(CPPFLAGS) -o $@ -c $<
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ -c $<
 
 $(MISC_OBJS): %.o: %.c
-	gcc $(CFLAGS) $(CPPFLAGS) -o $@ -c $<
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ -c $<
 
 $(MISC_AS_OBJS): %.o: %.s
-	gcc $(ASFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CC) $(ASFLAGS) $(CPPFLAGS) -c $< -o $@
 
 $(PCRE_OBJS): %.o: %.c
-	gcc $(CFLAGS) $(CPPFLAGS) -DHAVE_CONFIG_H -o $@ -c $<
+	$(CC) $(CFLAGS) $(CPPFLAGS) -DHAVE_CONFIG_H -o $@ -c $<
 
 $(LWIP_OBJS): %.o: %.c
-	gcc $(CFLAGS) $(CPPFLAGS) -Wno-char-subscripts -o $@ -c $<
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Wno-char-subscripts -o $@ -c $<
+
+ling_main.c: scripts/ling_main_c.et scripts/hot_cold_iops
+	scripts/main_gen $^
 
 ling_main.o: ling_main.c include/atom_defs.h
-	gcc $(CFLAGS) $(CPPFLAGS) -fno-reorder-blocks -o $@ -c $<
+	$(CC) $(CFLAGS) $(CPPFLAGS) -fno-reorder-blocks -o $@ -c $<
 
 include/bif.h: ../bc/scripts/bif.tab
 	scripts/bifs_gen $< $@
@@ -119,7 +140,7 @@ $(BEAMS): %.beam: %.erl
 
 PREMODS := $(patsubst %.erl,%.beam,$(wildcard preload/*.erl))
 $(PREMODS): %.beam: %.erl
-	erlc -o preload $<
+	erlc -DLING_VER=\"$(LING_VER)\" -o preload $<
 
 gentab/exp_tab.erl: $(PREMODS) ../bc/scripts/bif.tab
 	scripts/exptab_gen preload ../bc/scripts/bif.tab $@
@@ -130,27 +151,27 @@ include/atom_defs.h atoms.inc gentab/atoms.erl: scripts/atoms.tab gentab/exp_tab
 
 
 premod: $(INCLUDES)
-$(INCLUDES): \
-				gentab/atoms.beam gentab/exp_tab.beam include/atom_defs.h $(PREMODS)
-	scripts/premod_gen preload \
-		premod.inc code_base.inc include/mod_info.inc preload/literals.bin catch_tab.inc copy
+$(INCLUDES): gentab/atoms.beam gentab/exp_tab.beam include/atom_defs.h $(PREMODS)
+	scripts/premod_gen preload premod.inc code_base.inc include/mod_info.inc preload/literals.bin catch_tab.inc copy
 
 preload/literals.o: preload/literals.bin
-	objcopy -I binary -O elf64-x86-64 -B i386 \
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386 \
 		--redefine-sym _binary_preload_literals_bin_start=literals_blob_start \
 		--redefine-sym _binary_preload_literals_bin_end=literals_blob_end \
 		--redefine-sym _binary_preload_literals_bin_size=literals_blob_size \
 		$< $@
 
-vmling.o: $(STARTUP_OBJ) $(MISC_AS_OBJS) $(ALL_OBJS) lib/nettle/libnettle.a
-	gcc -o $@ $(STARTUP_OBJ) $(MISC_AS_OBJS) $(ALL_OBJS) $(LDFLAGS) $(LDFLAGS_FINAL) $(CFLAGS)
+vmling.o: $(STARTUP_OBJ) $(MISC_AS_OBJS) $(ALL_OBJS)
+	$(CC) -o $@ $(STARTUP_OBJ) $(MISC_AS_OBJS) $(ALL_OBJS) $(LDFLAGS) $(LDFLAGS_FINAL) $(CFLAGS)
+
+nettle: lib/nettle/libnettle.a
 
 lib/nettle/libnettle.a: lib/nettle/config.h
-	make -C lib/nettle
+	$(MAKE) -C lib/nettle
 
 lib/nettle/config.h: lib/nettle.tar.gz
 	mkdir -p lib/nettle && tar vxzf $< -C lib/nettle --strip-components=1 && \
-	cd lib/nettle && ./configure --disable-public-key --disable-shared --disable-pic --disable-openssl CFLAGS="-fno-stack-protector -U_FORTIFY_SOURCE"
+	cd lib/nettle && ./configure --disable-public-key --disable-shared --disable-pic --disable-openssl $(NETTLE_FLAGS) CFLAGS="-fno-stack-protector -U_FORTIFY_SOURCE"
 
 lib/nettle.tar.gz:
 	wget -O $@ --no-check-certificate -c https://ftp.gnu.org/gnu/nettle/nettle-2.7.1.tar.gz

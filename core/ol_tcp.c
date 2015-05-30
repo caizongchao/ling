@@ -31,9 +31,6 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-//
-//
-
 #include "outlet.h"
 #include "ol_inet.h"
 
@@ -283,7 +280,7 @@ static term_t ol_tcp_control(outlet_t *ol,
 	int sz;
 
 	assert(ol != 0);
-	assert(ol->tcp != 0 || op == INET_REQ_OPEN || op == INET_REQ_SUBSCRIBE);
+	assert(ol->tcp != 0 || op == INET_REQ_OPEN || op == INET_REQ_SUBSCRIBE || op == INET_REQ_SETOPTS);
 
 	switch (op)
 	{
@@ -361,11 +358,10 @@ static term_t ol_tcp_control(outlet_t *ol,
 			PUT_UINT_16(reply, ref);
 			reply += 2;
 		}
+		else if (err == ERR_RTE)
+			REPLY_INET_ERROR("eunreach");
 		else
 		{
-			//
-			//TODO: ERR_RTE possible too (IPv6)
-			//
 			assert(err == ERR_MEM);
 			REPLY_INET_ERROR("enomem");
 		}
@@ -809,8 +805,8 @@ static err_t recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *data, err_t er
 		ol->recv_buf_off += len;
 
 		// A more natural place to acknowledge the data when complete packets
-		// are baked.
-		//tcp_recved(ol->tcp, len);
+		// are baked. No.
+		tcp_recved(ol->tcp, len);
 
 		pbuf_free(data);
 		int x = recv_bake_packets(ol, cont_proc);
@@ -984,7 +980,7 @@ more_packets:
 
 				// Is it safe to acknowledge the data here, outside of the
 				// receive callback?
-				tcp_recved(ol->tcp, consumed);
+				//tcp_recved(ol->tcp, consumed);
 
 				if (ol->packet == TCP_PB_HTTP || ol->packet == TCP_PB_HTTP_BIN)
 					active_tag = A_HTTP;
@@ -1085,7 +1081,10 @@ static int ol_tcp_set_opts(outlet_t *ol, uint8_t *data, int dlen)
 			break;
 
 		case INET_OPT_TOS:
-			ol->tcp->tos = (uint8_t)val;
+			if (ol->tcp)
+				ol->tcp->tos = (uint8_t)val;
+			else
+				printk("tcp_set_opts: INET_OPT_TOS ignored\n");
 			break;
 
 		case TCP_OPT_NODELAY:
@@ -1094,10 +1093,13 @@ static int ol_tcp_set_opts(outlet_t *ol, uint8_t *data, int dlen)
 			// Nagle's algo fights silly window syndrome. What is its
 			// relationship to not delaying send?
 			//
-			if (val)
-				tcp_nagle_disable(ol->tcp);
+			if (ol->tcp)
+				if (val)
+					tcp_nagle_disable(ol->tcp);
+				else
+					tcp_nagle_enable(ol->tcp);
 			else
-				tcp_nagle_enable(ol->tcp);
+				printk("tcp_set_opts: TCP_OPT_NODELAY ignored\n");
 			break;
 
 		default:

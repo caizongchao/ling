@@ -49,6 +49,7 @@
 -export([disconnect_node/1]).
 -export([get_cookie/0]).
 -export([min/2,max/2]).
+-export([binary_to_integer/1,binary_to_integer/2]).
 -export([integer_to_binary/1,integer_to_binary/2]).
 -export([integer_to_list/2]).
 -export([list_to_integer/1,list_to_integer/2,list_to_integer/3]).
@@ -104,9 +105,8 @@
 
 -compile({no_auto_import,[halt/2,port_command/3]}).
 
--define(LING_VER, "0.2.3").
--define(LING_COMPAT_REL, 16).
--define(LING_COMPAT_OTP_RELEASE, "R16B01").	%% do not forget to update this
+-define(LING_COMPAT_REL, 17).
+-define(LING_COMPAT_OTP_RELEASE, "17").	%% do not forget to update this
 
 get_module_info(Module) when is_atom(Module) ->
 	Items = [exports,imports,attributes,compile],
@@ -205,6 +205,9 @@ min(_, B) -> B.
 
 max(A, B) when A > B -> A;
 max(_, B) -> B.
+
+binary_to_integer(Bin) -> erlang:list_to_integer(binary_to_list(Bin)).
+binary_to_integer(Bin, Base) -> erlang:list_to_integer(binary_to_list(Bin), Base). 
 
 integer_to_binary(I) -> list_to_binary(integer_to_list(I)).
 integer_to_binary(I, Base) -> list_to_binary(erlang:integer_to_list(I, Base)).
@@ -565,7 +568,7 @@ system_monitor(Pid, Opts) ->
 
 system_info(os_type) -> {xen,ling};
 system_info(os_version) -> {7,7,7};
-system_info(version) -> "5.10.2";	%% Eshell version?
+system_info(version) -> "6.3";	%% Eshell version?
 
 system_info(system_version) ->
 	lists:flatten(["Erlang [ling-",?LING_VER,"]\n"]);
